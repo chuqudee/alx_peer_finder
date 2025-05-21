@@ -1,3 +1,4 @@
-fastapi
-uvicorn
-pydantic
+Flask
+pandas
+Flask-Mail
+gunicorn
