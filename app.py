@@ -18,7 +18,7 @@ app.config.update(
     MAIL_PORT=587,
     MAIL_USE_TLS=True,
     MAIL_USERNAME='',  # Your email here
-    MAIL_PASSWORD='',          # Your password or app password here
+    MAIL_PASSWORD='',          # Insert your password or app password here
 )
 mail = Mail(app)
 
