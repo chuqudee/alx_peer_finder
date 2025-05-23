@@ -135,13 +135,18 @@ def match_users():
     df = read_queue()
     cohorts = df['cohort'].dropna().unique()
     weeks = df['assessment_week'].dropna().unique()
+    # Optional: languages = df['language'].dropna().unique()
+
     for cohort in cohorts:
         for week in weeks:
+            # Uncomment below to match only learners with the same language as well
+            # for language in languages:
             for group_size in [2, 5]:
                 eligible = df[
                     (df['matched'] == False) &
                     (df['cohort'] == cohort) &
                     (df['assessment_week'] == week) &
+                    # (df['language'] == language) &  # Uncomment to enforce language match
                     (df['group_size'] == group_size)
                 ]
                 while len(eligible) >= group_size:
