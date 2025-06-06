@@ -169,6 +169,13 @@
             font-size: 1rem;
             font-family: 'Poppins', Arial, sans-serif;
         }
+        .form-card input[type="checkbox"] {
+            margin-left: 0;         /* Align checkbox to the far left */
+            width: 18px;            /* Adjust size */
+            height: 18px;
+            cursor: pointer;
+            accent-color: #5648B7;  /* Modern browsers support accent-color to change checkbox color */
+        }
         .form-card button {
             width: 50%;
             background: #27DEF2;
@@ -336,9 +343,6 @@
     </div>
     <div class="form-card" id="join-form">
         <h2>Join the Peer Queue</h2>
-        {% if error %}
-        <p style="color:red; text-align:center;">{{ error }}</p>
-        {% endif %}
         <form method="POST" action="{{ url_for('join_queue') }}">
             <label>Full Name:</label>
             <input type="text" name="name" required />
@@ -347,31 +351,41 @@
             <input type="email" name="email" required />
 
             <label>WhatsApp Number:</label>
-            <input id="phone" type="tel" name="phone" required placeholder="Enter your phone number" />
+            <input type="tel" id="phone" name="phone" required />
 
-            <label>Cohort Number:</label>
-            <select name="cohort" required>
-                <option value="">--Select Cohort--</option>
-                {% for c in range(8, 13) %}
-                    <option value="Cohort {{ c }}">Cohort {{ c }}</option>
-                {% endfor %}
-            </select>
-
-            <label>Assessment Week:</label>
-            <select name="assessment_week" required>
-                <option value="">--Select Week--</option>
-                {% for w in range(1, 13) %}
-                    <option value="Week {{ w }}">Week {{ w }}</option>
-                {% endfor %}
-            </select>
-
-            <label>What is your preferred language of communication?</label>
-            <select name="language" required>
-                <option value="">--Select Language--</option>
+            <label for="language">What is your preferred language of communication?</label>
+            <select name="language" id="language" required>
+                <option value="">--Select--</option>
                 <option value="English">English</option>
-                <option value="French">French</option>
                 <option value="Arabic">Arabic</option>
+                <option value="French">French</option>
                 <option value="Swahili">Swahili</option>
+            </select>
+
+            <label for="cohort">What is your current Cohort?</label>
+            <select name="cohort" id="cohort" required>
+                <option value="">--Select--</option>
+                <option value="Cohort 8">Cohort 8</option>
+                <option value="Cohort 9">Cohort 9</option>
+                <option value="Cohort 10">Cohort 10</option>
+                <option value="Cohort 11">Cohort 11</option>
+            </select>
+
+            <label>Select Assessment week</label>
+            <select name="assessment_week" required>
+                <option value="">--Select--</option>
+                <option value="Week 1">Week 1</option>
+                <option value="Week 2">Week 2</option>
+                <option value="Week 3">Week 3</option>
+                <option value="Week 4">Week 4</option>
+                <option value="Week 5">Week 5</option>
+                <option value="Week 6">Week 6</option>
+                <option value="Week 7">Week 7</option>
+                <option value="Week 8">Week 8</option>
+                <option value="Week 9">Week 9</option>
+                <option value="Week 10">Week 10</option>
+                <option value="Week 11">Week 11</option>
+                <option value="Week 12">Week 12</option>
             </select>
 
             <label>Submitted Previous Week's Assessment?</label>
@@ -388,11 +402,20 @@
                 <option value="5">Find a Group of 5</option>
             </select>
 
+            <div style="margin-top: 0.5rem; margin-bottom: 1rem; display: flex; align-items: center;">
+                <input type="checkbox" id="disclaimer_agree" name="disclaimer_agree" required style="margin: 0; margin-right: 8px;" />
+                    <label for="disclaimer_agree" style="font-size: 0.98rem; margin: 0;">
+                        I have read and accept the
+                        <a href="{{ url_for('disclaimer') }}" target="_blank" style="color:#5648B7; font-weight:600; text-decoration:underline;">
+                        PeerFinder Disclaimer
+                        </a>.
+                    </label>
+            </div>
+
             <button type="submit">Join Queue</button>
         </form>
     </div>
 
-    <!-- International Telephone Input JS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/intl-tel-input/17.0.8/js/intlTelInput.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/intl-tel-input/17.0.8/js/utils.js"></script>
     <script>
@@ -408,7 +431,6 @@
             utilsScript: "https://cdnjs.cloudflare.com/ajax/libs/intl-tel-input/17.0.8/js/utils.js",
             separateDialCode: true,
         });
-        
         document.querySelector("form").addEventListener("submit", function(e) {
             if (phoneInput.value.trim()) {
                 if (iti.isValidNumber()) {
