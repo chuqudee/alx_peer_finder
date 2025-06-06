@@ -17,8 +17,8 @@ app.config.update(
     MAIL_SERVER='smtp.gmail.com',
     MAIL_PORT=587,
     MAIL_USE_TLS=True,
-    MAIL_USERNAME='',  # Your email here
-    MAIL_PASSWORD='',          # Insert your password or app password here
+    MAIL_USERNAME='cokereafor@alxafrica.com',  # Your email here
+    MAIL_PASSWORD='moqancerplnpisro',          # Your password or app password here
 )
 mail = Mail(app)
 
@@ -121,6 +121,10 @@ def join_queue():
     save_queue(df)
     return redirect(url_for('waiting', user_id=new_user['id']))
 
+@app.route('/disclaimer')
+def disclaimer():
+    return render_template('disclaimer.html')
+
 @app.route('/waiting/<user_id>')
 def waiting(user_id):
     return render_template('waiting.html', user_id=user_id)
@@ -135,18 +139,13 @@ def match_users():
     df = read_queue()
     cohorts = df['cohort'].dropna().unique()
     weeks = df['assessment_week'].dropna().unique()
-    # Optional: languages = df['language'].dropna().unique()
-
     for cohort in cohorts:
         for week in weeks:
-            # Uncomment below to match only learners with the same language as well
-            # for language in languages:
             for group_size in [2, 5]:
                 eligible = df[
                     (df['matched'] == False) &
                     (df['cohort'] == cohort) &
                     (df['assessment_week'] == week) &
-                    # (df['language'] == language) &  # Uncomment to enforce language match
                     (df['group_size'] == group_size)
                 ]
                 while len(eligible) >= group_size:
