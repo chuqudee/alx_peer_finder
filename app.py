@@ -17,8 +17,8 @@ app.config.update(
     MAIL_SERVER='smtp.gmail.com',
     MAIL_PORT=587,
     MAIL_USE_TLS=True,
-    MAIL_USERNAME='',          # Your email here
-    MAIL_PASSWORD='',          # Your password or app password here #moqancerplnpisro#
+    MAIL_USERNAME='cokereafor@alxafrica.com',  # Your email here
+    MAIL_PASSWORD='moqancerplnpisro',          # Your password or app password here
 )
 mail = Mail(app)
 
@@ -141,27 +141,25 @@ def match_users():
     weeks = df['assessment_week'].dropna().unique()
     for cohort in cohorts:
         for week in weeks:
-            for language in languages:  # Add this loop
-                for group_size in [2, 5]:
-                    eligible = df[
-                        (df['matched'] == False) &
-                        (df['cohort'] == cohort) &
-                        (df['assessment_week'] == week) &
-                        (df['language'] == language) &
-                        (df['group_size'] == group_size)
-                    ]
-                    while len(eligible) >= group_size:
-                        group = eligible.iloc[:group_size]
-                        if group['id'].nunique() < group_size:
-                            eligible = eligible.iloc[group_size:]
-                            continue
-                        group_id = f"group-{uuid.uuid4()}"
-                        df.loc[df['id'].isin(group['id']), 'matched'] = True
-                        df.loc[df['id'].isin(group['id']), 'group_id'] = group_id
-                        save_queue(df)
-                        group_members = df[df['group_id'] == group_id][['name', 'phone', 'email', 'id']].to_dict('records')
-                        send_match_email(group_members)
+            for group_size in [2, 5]:
+                eligible = df[
+                    (df['matched'] == False) &
+                    (df['cohort'] == cohort) &
+                    (df['assessment_week'] == week) &
+                    (df['group_size'] == group_size)
+                ]
+                while len(eligible) >= group_size:
+                    group = eligible.iloc[:group_size]
+                    if group['id'].nunique() < group_size:
                         eligible = eligible.iloc[group_size:]
+                        continue
+                    group_id = f"group-{uuid.uuid4()}"
+                    df.loc[df['id'].isin(group['id']), 'matched'] = True
+                    df.loc[df['id'].isin(group['id']), 'group_id'] = group_id
+                    save_queue(df)
+                    group_members = df[df['group_id'] == group_id][['name', 'phone', 'email', 'id']].to_dict('records')
+                    send_match_email(group_members)
+                    eligible = eligible.iloc[group_size:]
 
     user = df[df['id'] == user_id]
     if user.empty:
