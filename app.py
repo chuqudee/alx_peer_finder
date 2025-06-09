@@ -146,6 +146,7 @@ def match_users():
                     (df['matched'] == False) &
                     (df['cohort'] == cohort) &
                     (df['assessment_week'] == week) &
+                    (df['language'] == language) &
                     (df['group_size'] == group_size)
                 ]
                 while len(eligible) >= group_size:
