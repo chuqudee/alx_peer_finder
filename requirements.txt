@@ -1,7 +1,6 @@
 Flask
-pandas
-Flask-Mail
-gunicorn
 Flask-SQLAlchemy
 psycopg2-binary
 Flask-Migrate
+Flask-Mail
+gunicorn
