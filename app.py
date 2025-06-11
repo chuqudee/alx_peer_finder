@@ -168,11 +168,6 @@ def waiting(user_id):
 
 @app.route('/match', methods=['POST'])
 def match_users():
-    data = request.json
-    user_id = data.get('user_id')
-    if not user_id:
-        return jsonify({'error': 'User ID required'}), 400
-
     df = read_queue()
     cohorts = df['cohort'].dropna().unique()
     weeks = df['assessment_week'].dropna().unique()
@@ -195,24 +190,20 @@ def match_users():
                     df.loc[df['id'].isin(group['id']), 'matched'] = True
                     df.loc[df['id'].isin(group['id']), 'group_id'] = group_id
                     save_queue(df)
+
+                    # Append matched users to Google Sheets with matched=True
+                    for _, matched_user in df[df['group_id'] == group_id].iterrows():
+                        matched_user_data = matched_user.to_dict()
+                        matched_user_data['matched'] = True
+                        delayed_append(matched_user_data)
+
                     group_members = df[df['group_id'] == group_id][['name', 'phone', 'email', 'id']].to_dict('records')
                     send_match_email(group_members)
+
                     eligible = eligible.iloc[group_size:]
 
-    user = df[df['id'] == user_id]
-    if user.empty:
-        return jsonify({'error': 'User not found'}), 404
-    user = user.iloc[0]
-    if user['matched']:
-        group_id = user['group_id']
-        group_members = df[df['group_id'] == group_id][['name', 'phone', 'email', 'id']].to_dict('records')
-        return jsonify({
-            'matched': True,
-            'group_id': group_id,
-            'members': group_members
-        })
-    else:
-        return jsonify({'matched': False})
+    # Return some status or redirect after matching
+    return jsonify({'status': 'Matching complete'})
 
 @app.route('/matched/<user_id>')
 def matched(user_id):
