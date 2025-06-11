@@ -1,18 +1,28 @@
-from flask import Flask, request, jsonify, render_template, redirect, url_for, send_file, flash
-import pandas as pd
-from datetime import datetime
-import uuid
 import os
+import uuid
+import threading
+from datetime import datetime
+from flask import Flask, request, render_template, redirect, url_for, flash, send_file, jsonify
+import pandas as pd
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 from flask_mail import Mail, Message
 
 app = Flask(__name__)
-app.secret_key = 'some_secret_key'  # Required for flashing messages
+app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key')  # Secure key from env[1]
 
+# CSV path (ephemeral storage)
 CSV_PATH = 'queue.csv'
 FEEDBACK_CSV_PATH = 'feedback.csv'  # Assuming feedback stored here
 
+# Google Sheets config from environment variables
+GSHEET_SHEET_ID = os.environ.get('GSHEET_SHEET_ID')  # Your Google Sheet ID
+GSHEET_CREDENTIALS_JSON = os.environ.get('GSHEET_CREDENTIALS_JSON')  # JSON string of credentials
+
+# Admin password for downloads
 ADMIN_PASSWORD = "alx_admin_2025_peer_finder"
 
+# Flask-Mail configuration
 app.config.update(
     MAIL_SERVER='smtp.gmail.com',
     MAIL_PORT=587,
@@ -22,11 +32,13 @@ app.config.update(
 )
 mail = Mail(app)
 
+# Columns for CSV and Google Sheet
 COLUMNS = [
     'id', 'name', 'phone', 'email', 'cohort', 'assessment_week', 'language',
     'timestamp', 'matched', 'group_size', 'group_id', 'unpair_reason'
 ]
 
+# Initialize CSV if missing
 if not os.path.exists(CSV_PATH):
     pd.DataFrame(columns=COLUMNS).to_csv(CSV_PATH, index=False)
 
@@ -35,6 +47,27 @@ def read_queue():
 
 def save_queue(df):
     df.to_csv(CSV_PATH, index=False)
+
+def get_gsheet_client():
+    scope = ['https://spreadsheets.google.com/feeds',
+             'https://www.googleapis.com/auth/drive']
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(
+        eval(GSHEET_CREDENTIALS_JSON), scope)
+    client = gspread.authorize(creds)
+    return client
+
+def append_to_sheet(user_data):
+    try:
+        client = get_gsheet_client()
+        sheet = client.open_by_key(GSHEET_SHEET_ID).sheet1
+        row = [user_data.get(col, '') for col in COLUMNS]
+        sheet.append_row(row)
+        print("Appended to Google Sheet successfully.")
+    except Exception as e:
+        print(f"Error appending to Google Sheet: {e}")
+
+def delayed_append(user_data, delay=60):
+    threading.Timer(delay, append_to_sheet, args=[user_data]).start()
 
 def send_match_email(group_members):
     with app.app_context():
@@ -75,6 +108,10 @@ def join_queue():
     assessment_week = request.form.get('assessment_week', '').strip()
     language = request.form.get('language', '').strip()
     group_size = request.form.get('group_size', '').strip()
+    disclaimer_agree = request.form.get('disclaimer_agree')
+
+    if not disclaimer_agree:
+        return render_template('index.html', error="You must accept the disclaimer to continue.")
 
     if not (name and phone and email and cohort and assessment_week and language and group_size):
         return render_template('index.html', error="Please fill all fields correctly.")
@@ -119,11 +156,11 @@ def join_queue():
 
     df = pd.concat([df, pd.DataFrame([new_user])], ignore_index=True)
     save_queue(df)
-    return redirect(url_for('waiting', user_id=new_user['id']))
 
-@app.route('/disclaimer')
-def disclaimer():
-    return render_template('disclaimer.html')
+    # Append to Google Sheets after delay
+    delayed_append(new_user)
+
+    return redirect(url_for('waiting', user_id=new_user['id']))
 
 @app.route('/waiting/<user_id>')
 def waiting(user_id):
@@ -139,6 +176,7 @@ def match_users():
     df = read_queue()
     cohorts = df['cohort'].dropna().unique()
     weeks = df['assessment_week'].dropna().unique()
+
     for cohort in cohorts:
         for week in weeks:
             for group_size in [2, 5]:
@@ -227,7 +265,6 @@ def unpair():
     save_queue(df)
     return jsonify({'success': True})
 
-# Password-protected download for queue CSV
 @app.route('/download/queue', methods=['GET', 'POST'])
 def download_queue():
     if request.method == 'POST':
@@ -241,7 +278,6 @@ def download_queue():
             return redirect(url_for('download_queue'))
     return render_template('password_prompt.html', file_type='Queue Data')
 
-# Password-protected download for feedback CSV
 @app.route('/download/feedback', methods=['GET', 'POST'])
 def download_feedback():
     if request.method == 'POST':
@@ -258,6 +294,10 @@ def download_feedback():
 @app.route('/admin')
 def admin():
     return render_template('admin.html')
+
+@app.route('/disclaimer')
+def disclaimer():
+    return render_template('disclaimer.html')
 
 if __name__ == '__main__':
     app.run(debug=True)
