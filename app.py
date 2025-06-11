@@ -12,7 +12,7 @@ import uuid
 app = Flask(__name__)
 
 # Load environment variables from Render
-DATABASE_URL = os.environ.get('Database_url')
+DATABASE_URL = os.environ.get('DATABASE_URL')
 SECRET_KEY = os.environ.get('SECRET_KEY')
 
 if not DATABASE_URL:
