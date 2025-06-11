@@ -25,6 +25,10 @@ app.secret_key = SECRET_KEY
 
 db = SQLAlchemy(app)
 
+# Create tables immediately on startup (Flask 2.3+ fix)
+with app.app_context():
+    db.create_all()
+
 # Mail config (update if needed)
 app.config.update(
     MAIL_SERVER='smtp.gmail.com',
@@ -60,10 +64,6 @@ class Feedback(db.Model):
     user_id = db.Column(db.String)
     feedback = db.Column(db.Text)
     timestamp = db.Column(db.DateTime, nullable=False, default=func.now())
-
-@app.before_first_request
-def create_tables():
-    db.create_all()
 
 def send_match_email(group_members):
     with app.app_context():
