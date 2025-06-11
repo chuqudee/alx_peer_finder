@@ -33,10 +33,38 @@ SHEET_COLUMNS = [
     'timestamp', 'matched', 'group_size', 'group_id', 'unpair_reason'
 ]
 
+def normalize_record(r):
+    # Normalize matched to boolean
+    if isinstance(r.get('matched'), str):
+        r['matched'] = r['matched'].strip().upper() == 'TRUE'
+    elif not isinstance(r.get('matched'), bool):
+        r['matched'] = False
+
+    # Normalize group_size to int
+    try:
+        r['group_size'] = int(r.get('group_size', 0))
+    except Exception:
+        r['group_size'] = 0
+
+    # Strip whitespace from cohort and assessment_week
+    r['cohort'] = r.get('cohort', '').strip()
+    r['assessment_week'] = r.get('assessment_week', '').strip()
+    r['language'] = r.get('language', '').strip()
+    r['phone'] = r.get('phone', '').strip()
+    r['email'] = r.get('email', '').strip().lower()
+
+    # Ensure other keys exist to avoid KeyError
+    for key in SHEET_COLUMNS:
+        if key not in r:
+            r[key] = ''
+
+    return r
+
 def get_all_records():
     try:
         records = sheet.get_all_records()
-        return records
+        normalized = [normalize_record(r) for r in records]
+        return normalized
     except Exception as e:
         print(f"Error reading sheet: {e}")
         return []
@@ -61,6 +89,10 @@ def update_records(records):
 def index():
     return render_template('index.html')
 
+@app.route('/disclaimer')
+def disclaimer():
+    return render_template('disclaimer.html')
+
 @app.route('/join', methods=['POST'])
 def join_queue():
     name = request.form.get('name', '').strip()
@@ -80,6 +112,11 @@ def join_queue():
     if language not in ['English', 'French', 'Arabic', 'Swahili']:
         return render_template('index.html', error="Please select a valid language.")
 
+    try:
+        group_size_int = int(group_size)
+    except ValueError:
+        return render_template('index.html', error="Invalid group size.")
+
     records = get_all_records()
 
     existing = [r for r in records if (r['phone'] == phone or r['email'] == email) and
@@ -87,7 +124,7 @@ def join_queue():
 
     if existing:
         user = existing[0]
-        if user['matched'] == 'True' or user['matched'] == True:
+        if user['matched']:
             group_id = user['group_id']
             group_members = [r for r in records if r['group_id'] == group_id]
             return render_template('already_matched.html', user=user, group_members=group_members)
@@ -104,7 +141,7 @@ def join_queue():
         'language': language,
         'timestamp': datetime.now().isoformat(),
         'matched': False,
-        'group_size': int(group_size),
+        'group_size': group_size_int,
         'group_id': '',
         'unpair_reason': ''
     }
@@ -132,7 +169,7 @@ def match_users():
     for cohort in cohorts:
         for week in weeks:
             for group_size in [2, 5]:
-                eligible = [r for r in records if (r['matched'] == False or r['matched'] == 'False') and
+                eligible = [r for r in records if not r['matched'] and
                             r['cohort'] == cohort and r['assessment_week'] == week and
                             r['group_size'] == group_size]
                 while len(eligible) >= group_size:
@@ -155,7 +192,7 @@ def match_users():
     if not user:
         return jsonify({'error': 'User not found'}), 404
 
-    if user['matched'] == True or user['matched'] == 'True':
+    if user['matched']:
         group_id = user['group_id']
         group_members = [r for r in records if r['group_id'] == group_id]
         return jsonify({
@@ -172,7 +209,7 @@ def matched(user_id):
     user = next((r for r in records if r['id'] == user_id), None)
     if not user:
         return "User not found", 404
-    if not (user['matched'] == True or user['matched'] == 'True'):
+    if not user['matched']:
         return redirect(url_for('waiting', user_id=user_id))
     group_id = user['group_id']
     group_members = [r for r in records if r['group_id'] == group_id]
@@ -190,7 +227,7 @@ def check_match():
         if not user:
             return render_template('check.html', error="ID not found. Please check and try again.")
 
-        if user['matched'] == True or user['matched'] == 'True':
+        if user['matched']:
             group_id = user['group_id']
             group_members = [r for r in records if r['group_id'] == group_id]
             return render_template('check.html', matched=True, group_members=group_members, user=user)
