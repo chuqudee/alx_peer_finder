@@ -1,6 +1,7 @@
 import os
 from flask import Flask, request, jsonify, render_template, redirect, url_for, send_file, flash
 from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
 from flask_mail import Mail, Message
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -24,10 +25,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.secret_key = SECRET_KEY
 
 db = SQLAlchemy(app)
-
-# Create tables immediately on startup (Flask 2.3+ fix)
-with app.app_context():
-    db.create_all()
+migrate = Migrate(app, db)  # Initialize Flask-Migrate
 
 # Mail config (update if needed)
 app.config.update(
@@ -96,52 +94,60 @@ def index():
 
 @app.route('/join', methods=['POST'])
 def join_queue():
-    name = request.form.get('name', '').strip()
-    phone = request.form.get('phone', '').strip()
-    email = request.form.get('email', '').strip().lower()
-    cohort = request.form.get('cohort', '').strip()
-    assessment_week = request.form.get('assessment_week', '').strip()
-    language = request.form.get('language', '').strip()
-    group_size = request.form.get('group_size', '').strip()
-    submitted = request.form.get('submitted', '').strip()
-    disclaimer_agree = request.form.get('disclaimer_agree')
+    try:
+        name = request.form.get('name', '').strip()
+        phone = request.form.get('phone', '').strip()
+        email = request.form.get('email', '').strip().lower()
+        cohort = request.form.get('cohort', '').strip()
+        assessment_week = request.form.get('assessment_week', '').strip()
+        language = request.form.get('language', '').strip()
+        group_size = request.form.get('group_size', '').strip()
+        submitted = request.form.get('submitted', '').strip()
+        disclaimer_agree = request.form.get('disclaimer_agree')
 
-    if not (name and phone and email and cohort and assessment_week and language and group_size and submitted):
-        return render_template('index.html', error="Please fill all fields correctly.")
-    if not disclaimer_agree:
-        return render_template('index.html', error="You must accept the disclaimer to continue.")
-    if not phone.startswith('+') or len(phone) < 7:
-        return render_template('index.html', error="Please enter a valid international phone number.")
-    if language not in ['English', 'French', 'Arabic', 'Swahili']:
-        return render_template('index.html', error="Please select a valid language.")
+        if not (name and phone and email and cohort and assessment_week and language and group_size and submitted):
+            return render_template('index.html', error="Please fill all fields correctly.")
+        if not disclaimer_agree:
+            return render_template('index.html', error="You must accept the disclaimer to continue.")
+        if not phone.startswith('+') or len(phone) < 7:
+            return render_template('index.html', error="Please enter a valid international phone number.")
+        if language not in ['English', 'French', 'Arabic', 'Swahili']:
+            return render_template('index.html', error="Please select a valid language.")
+        try:
+            group_size_int = int(group_size)
+        except (ValueError, TypeError):
+            return render_template('index.html', error="Invalid group size.")
 
-    existing = QueueEntry.query.filter(
-        ((QueueEntry.phone == phone) | (QueueEntry.email == email)) &
-        (QueueEntry.cohort == cohort) &
-        (QueueEntry.assessment_week == assessment_week) &
-        (QueueEntry.language == language)
-    ).first()
-    if existing:
-        if existing.matched:
-            group_members = QueueEntry.query.filter_by(group_id=existing.group_id).all()
-            return render_template('already_matched.html', user=existing, group_members=group_members)
-        else:
-            return render_template('already_in_queue.html', user_id=existing.id)
+        existing = QueueEntry.query.filter(
+            ((QueueEntry.phone == phone) | (QueueEntry.email == email)) &
+            (QueueEntry.cohort == cohort) &
+            (QueueEntry.assessment_week == assessment_week) &
+            (QueueEntry.language == language)
+        ).first()
+        if existing:
+            if existing.matched:
+                group_members = QueueEntry.query.filter_by(group_id=existing.group_id).all()
+                return render_template('already_matched.html', user=existing, group_members=group_members)
+            else:
+                return render_template('already_in_queue.html', user_id=existing.id)
 
-    new_user = QueueEntry(
-        name=name,
-        phone=phone,
-        email=email,
-        cohort=cohort,
-        assessment_week=assessment_week,
-        language=language,
-        group_size=int(group_size),
-        submitted=submitted,
-        matched=False
-    )
-    db.session.add(new_user)
-    db.session.commit()
-    return redirect(url_for('waiting', user_id=new_user.id))
+        new_user = QueueEntry(
+            name=name,
+            phone=phone,
+            email=email,
+            cohort=cohort,
+            assessment_week=assessment_week,
+            language=language,
+            group_size=group_size_int,
+            submitted=submitted,
+            matched=False
+        )
+        db.session.add(new_user)
+        db.session.commit()
+        return redirect(url_for('waiting', user_id=new_user.id))
+    except Exception as e:
+        app.logger.error(f"Error in join_queue: {e}")
+        return render_template('index.html', error="An unexpected error occurred. Please try again.")
 
 @app.route('/waiting/<user_id>')
 def waiting(user_id):
@@ -283,4 +289,5 @@ def disclaimer():
     return render_template('disclaimer.html')
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
