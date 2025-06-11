@@ -1,5 +1,5 @@
 Flask
-Pandas
+pandas
 Flask-SQLAlchemy
 psycopg2-binary
 Flask-Migrate
