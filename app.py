@@ -85,6 +85,23 @@ def update_records(records):
     except Exception as e:
         print(f"Error updating sheet: {e}")
 
+def find_student_row(records, phone, email, cohort, assessment_week, language):
+    for idx, r in enumerate(records, start=2):  # Sheet rows start at 1, header is row 1
+        if (r['phone'] == phone or r['email'] == email) and \
+           r['cohort'] == cohort and \
+           r['assessment_week'] == assessment_week and \
+           r['language'] == language:
+            return idx
+    return None
+
+def update_student_row(row_index, record):
+    row = [record.get(col, '') for col in SHEET_COLUMNS]
+    try:
+        # Update the row in the sheet (columns A to L)
+        sheet.update(f'A{row_index}:L{row_index}', [row])
+    except Exception as e:
+        print(f"Error updating student row: {e}")
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -115,18 +132,18 @@ def join_queue():
 
     records = get_all_records()
 
-    existing = [r for r in records if (r['phone'] == phone or r['email'] == email) and
-                r['cohort'] == cohort and r['assessment_week'] == assessment_week and r['language'] == language]
+    row_index = find_student_row(records, phone, email, cohort, assessment_week, language)
 
-    if existing:
-        user = existing[0]
-        if user['matched']:
-            group_id = user['group_id']
+    if row_index:
+        existing_record = records[row_index - 2]
+        if existing_record['matched']:
+            group_id = existing_record['group_id']
             group_members = [r for r in records if r['group_id'] == group_id]
-            return render_template('already_matched.html', user=user, group_members=group_members)
+            return render_template('already_matched.html', user=existing_record, group_members=group_members)
         else:
-            return render_template('already_in_queue.html', user_id=user['id'])
+            return render_template('already_in_queue.html', user_id=existing_record['id'])
 
+    # New student, create record
     new_user = {
         'id': str(uuid.uuid4()),
         'name': name,
