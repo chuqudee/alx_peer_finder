@@ -1,99 +1,61 @@
 import os
+import json
 import uuid
-import threading
 from datetime import datetime
-from flask import Flask, request, render_template, redirect, url_for, flash, send_file, jsonify
-import pandas as pd
+from flask import Flask, request, jsonify, render_template, redirect, url_for, flash
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from flask_mail import Mail, Message
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key')  # Secure key from env[1]
+app.secret_key = os.environ.get('SECRET_KEY', 'default_secret_key')
 
-# CSV path (ephemeral storage)
-CSV_PATH = 'queue.csv'
-FEEDBACK_CSV_PATH = 'feedback.csv'  # Assuming feedback stored here
+# Load Google Sheets credentials from environment variable
+GSHEET_CREDENTIALS_JSON = os.environ.get('GSHEET_CREDENTIALS_JSON')
+GSHEET_SHEET_ID = os.environ.get('GSHEET_SHEET_ID')
 
-# Google Sheets config from environment variables
-GSHEET_SHEET_ID = os.environ.get('GSHEET_SHEET_ID')  # Your Google Sheet ID
-GSHEET_CREDENTIALS_JSON = os.environ.get('GSHEET_CREDENTIALS_JSON')  # JSON string of credentials
+if not GSHEET_CREDENTIALS_JSON or not GSHEET_SHEET_ID:
+    raise Exception("Google Sheets credentials or Sheet ID not set in environment variables")
 
-# Admin password for downloads
-ADMIN_PASSWORD = "alx_admin_2025_peer_finder"
+# Parse credentials JSON string
+creds_dict = json.loads(GSHEET_CREDENTIALS_JSON)
 
-# Flask-Mail configuration
-app.config.update(
-    MAIL_SERVER='smtp.gmail.com',
-    MAIL_PORT=587,
-    MAIL_USE_TLS=True,
-    MAIL_USERNAME='cokereafor@alxafrica.com',  # Your email here
-    MAIL_PASSWORD='moqancerplnpisro',          # Your password or app password here
-)
-mail = Mail(app)
+# Setup Google Sheets API client
+SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
+client = gspread.authorize(creds)
 
-# Columns for CSV and Google Sheet
-COLUMNS = [
+# Open the sheet by ID
+sheet = client.open_by_key(GSHEET_SHEET_ID).sheet1  # Use first worksheet
+
+# Define expected columns in the sheet header row
+SHEET_COLUMNS = [
     'id', 'name', 'phone', 'email', 'cohort', 'assessment_week', 'language',
     'timestamp', 'matched', 'group_size', 'group_id', 'unpair_reason'
 ]
 
-# Initialize CSV if missing
-if not os.path.exists(CSV_PATH):
-    pd.DataFrame(columns=COLUMNS).to_csv(CSV_PATH, index=False)
-
-def read_queue():
-    return pd.read_csv(CSV_PATH)
-
-def save_queue(df):
-    df.to_csv(CSV_PATH, index=False)
-
-def get_gsheet_client():
-    scope = ['https://spreadsheets.google.com/feeds',
-             'https://www.googleapis.com/auth/drive']
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(
-        eval(GSHEET_CREDENTIALS_JSON), scope)
-    client = gspread.authorize(creds)
-    return client
-
-def append_to_sheet(user_data):
+def get_all_records():
     try:
-        client = get_gsheet_client()
-        sheet = client.open_by_key(GSHEET_SHEET_ID).sheet1
-        row = [user_data.get(col, '') for col in COLUMNS]
-        sheet.append_row(row)
-        print("Appended to Google Sheet successfully.")
+        records = sheet.get_all_records()
+        return records
     except Exception as e:
-        print(f"Error appending to Google Sheet: {e}")
+        print(f"Error reading sheet: {e}")
+        return []
 
-def delayed_append(user_data, delay=60):
-    threading.Timer(delay, append_to_sheet, args=[user_data]).start()
+def append_record(record):
+    row = [record.get(col, '') for col in SHEET_COLUMNS]
+    try:
+        sheet.append_row(row)
+    except Exception as e:
+        print(f"Error appending to sheet: {e}")
 
-def send_match_email(group_members):
-    with app.app_context():
-        for member in group_members:
-            msg = Message(
-                subject="You Have Been Matched!",
-                sender=app.config['MAIL_USERNAME'],
-                recipients=[member['email']],
-            )
-            peers = [f"{m['name']} (WhatsApp: {m['phone']})" for m in group_members if m['id'] != member['id']]
-            peers_text = "\n".join(peers) if peers else "No peers found."
-            msg.body = f"""Hello {member['name']},
-
-You have been matched with the following peer(s):
-{peers_text}
-
-Please contact your peer(s) now!
-
-Best regards,
-Peer Matching Team
-"""
-            try:
-                mail.send(msg)
-                print(f"Email sent to {member['email']}")
-            except Exception as e:
-                print(f"Failed to send email to {member['email']}: {e}")
+def update_records(records):
+    try:
+        sheet.resize(rows=1)  # Keep header only
+        rows = [[r.get(col, '') for col in SHEET_COLUMNS] for r in records]
+        if rows:
+            sheet.append_rows(rows)
+    except Exception as e:
+        print(f"Error updating sheet: {e}")
 
 @app.route('/')
 def index():
@@ -108,10 +70,6 @@ def join_queue():
     assessment_week = request.form.get('assessment_week', '').strip()
     language = request.form.get('language', '').strip()
     group_size = request.form.get('group_size', '').strip()
-    disclaimer_agree = request.form.get('disclaimer_agree')
-
-    if not disclaimer_agree:
-        return render_template('index.html', error="You must accept the disclaimer to continue.")
 
     if not (name and phone and email and cohort and assessment_week and language and group_size):
         return render_template('index.html', error="Please fill all fields correctly.")
@@ -122,19 +80,16 @@ def join_queue():
     if language not in ['English', 'French', 'Arabic', 'Swahili']:
         return render_template('index.html', error="Please select a valid language.")
 
-    df = read_queue()
+    records = get_all_records()
 
-    existing = df[
-        ((df['phone'] == phone) | (df['email'] == email)) &
-        (df['cohort'] == cohort) &
-        (df['assessment_week'] == assessment_week) &
-        (df['language'] == language)
-    ]
-    if not existing.empty:
-        user = existing.iloc[0]
-        if user['matched']:
+    existing = [r for r in records if (r['phone'] == phone or r['email'] == email) and
+                r['cohort'] == cohort and r['assessment_week'] == assessment_week and r['language'] == language]
+
+    if existing:
+        user = existing[0]
+        if user['matched'] == 'True' or user['matched'] == True:
             group_id = user['group_id']
-            group_members = df[df['group_id'] == group_id][['name', 'phone', 'email', 'id']].to_dict('records')
+            group_members = [r for r in records if r['group_id'] == group_id]
             return render_template('already_matched.html', user=user, group_members=group_members)
         else:
             return render_template('already_in_queue.html', user_id=user['id'])
@@ -154,12 +109,7 @@ def join_queue():
         'unpair_reason': ''
     }
 
-    df = pd.concat([df, pd.DataFrame([new_user])], ignore_index=True)
-    save_queue(df)
-
-    # Append to Google Sheets after delay
-    delayed_append(new_user)
-
+    append_record(new_user)
     return redirect(url_for('waiting', user_id=new_user['id']))
 
 @app.route('/waiting/<user_id>')
@@ -168,54 +118,64 @@ def waiting(user_id):
 
 @app.route('/match', methods=['POST'])
 def match_users():
-    df = read_queue()
-    cohorts = df['cohort'].dropna().unique()
-    weeks = df['assessment_week'].dropna().unique()
+    data = request.json
+    user_id = data.get('user_id')
+    if not user_id:
+        return jsonify({'error': 'User ID required'}), 400
+
+    records = get_all_records()
+    cohorts = list(set(r['cohort'] for r in records if r['cohort']))
+    weeks = list(set(r['assessment_week'] for r in records if r['assessment_week']))
+
+    updated = False
 
     for cohort in cohorts:
         for week in weeks:
             for group_size in [2, 5]:
-                eligible = df[
-                    (df['matched'] == False) &
-                    (df['cohort'] == cohort) &
-                    (df['assessment_week'] == week) &
-                    (df['group_size'] == group_size)
-                ]
+                eligible = [r for r in records if (r['matched'] == False or r['matched'] == 'False') and
+                            r['cohort'] == cohort and r['assessment_week'] == week and
+                            r['group_size'] == group_size]
                 while len(eligible) >= group_size:
-                    group = eligible.iloc[:group_size]
-                    if group['id'].nunique() < group_size:
-                        eligible = eligible.iloc[group_size:]
+                    group = eligible[:group_size]
+                    if len(set(r['id'] for r in group)) < group_size:
+                        eligible = eligible[group_size:]
                         continue
                     group_id = f"group-{uuid.uuid4()}"
-                    df.loc[df['id'].isin(group['id']), 'matched'] = True
-                    df.loc[df['id'].isin(group['id']), 'group_id'] = group_id
-                    save_queue(df)
+                    for r in records:
+                        if r['id'] in [g['id'] for g in group]:
+                            r['matched'] = True
+                            r['group_id'] = group_id
+                    updated = True
+                    eligible = eligible[group_size:]
 
-                    # Append matched users to Google Sheets with matched=True
-                    for _, matched_user in df[df['group_id'] == group_id].iterrows():
-                        matched_user_data = matched_user.to_dict()
-                        matched_user_data['matched'] = True
-                        delayed_append(matched_user_data)
+    if updated:
+        update_records(records)
 
-                    group_members = df[df['group_id'] == group_id][['name', 'phone', 'email', 'id']].to_dict('records')
-                    send_match_email(group_members)
+    user = next((r for r in records if r['id'] == user_id), None)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
 
-                    eligible = eligible.iloc[group_size:]
-
-    # Return some status or redirect after matching
-    return jsonify({'status': 'Matching complete'})
+    if user['matched'] == True or user['matched'] == 'True':
+        group_id = user['group_id']
+        group_members = [r for r in records if r['group_id'] == group_id]
+        return jsonify({
+            'matched': True,
+            'group_id': group_id,
+            'members': group_members
+        })
+    else:
+        return jsonify({'matched': False})
 
 @app.route('/matched/<user_id>')
 def matched(user_id):
-    df = read_queue()
-    user = df[df['id'] == user_id]
-    if user.empty:
+    records = get_all_records()
+    user = next((r for r in records if r['id'] == user_id), None)
+    if not user:
         return "User not found", 404
-    user = user.iloc[0]
-    if not user['matched']:
+    if not (user['matched'] == True or user['matched'] == 'True'):
         return redirect(url_for('waiting', user_id=user_id))
     group_id = user['group_id']
-    group_members = df[df['group_id'] == group_id][['name', 'phone', 'email', 'id']].to_dict('records')
+    group_members = [r for r in records if r['group_id'] == group_id]
     return render_template('matched.html', user=user, group_members=group_members)
 
 @app.route('/check', methods=['GET', 'POST'])
@@ -225,15 +185,14 @@ def check_match():
         if not user_id:
             return render_template('check.html', error="Please enter your ID.")
 
-        df = read_queue()
-        user = df[df['id'] == user_id]
-        if user.empty:
+        records = get_all_records()
+        user = next((r for r in records if r['id'] == user_id), None)
+        if not user:
             return render_template('check.html', error="ID not found. Please check and try again.")
 
-        user = user.iloc[0]
-        if user['matched']:
+        if user['matched'] == True or user['matched'] == 'True':
             group_id = user['group_id']
-            group_members = df[df['group_id'] == group_id][['name', 'phone', 'email', 'id']].to_dict('records')
+            group_members = [r for r in records if r['group_id'] == group_id]
             return render_template('check.html', matched=True, group_members=group_members, user=user)
         else:
             return render_template('check.html', matched=False, user=user)
@@ -246,50 +205,22 @@ def unpair():
     reason = request.form.get('reason', '').strip()
     if not user_id or not reason:
         return jsonify({'error': 'User ID and reason are required'}), 400
-    df = read_queue()
-    idx = df[df['id'] == user_id].index
-    if len(idx) == 0:
+
+    records = get_all_records()
+    user = next((r for r in records if r['id'] == user_id), None)
+    if not user:
         return jsonify({'error': 'User not found'}), 404
-    df.at[idx[0], 'matched'] = False
-    df.at[idx[0], 'group_id'] = ''
-    df.at[idx[0], 'unpair_reason'] = reason
-    save_queue(df)
+
+    user['matched'] = False
+    user['group_id'] = ''
+    user['unpair_reason'] = reason
+
+    update_records(records)
     return jsonify({'success': True})
-
-@app.route('/download/queue', methods=['GET', 'POST'])
-def download_queue():
-    if request.method == 'POST':
-        password = request.form.get('password', '')
-        if password == ADMIN_PASSWORD:
-            if not os.path.exists(CSV_PATH):
-                return "No queue data available.", 404
-            return send_file(CSV_PATH, as_attachment=True, download_name='peerfinder_queue.csv', mimetype='text/csv')
-        else:
-            flash("Incorrect password. Access denied.")
-            return redirect(url_for('download_queue'))
-    return render_template('password_prompt.html', file_type='Queue Data')
-
-@app.route('/download/feedback', methods=['GET', 'POST'])
-def download_feedback():
-    if request.method == 'POST':
-        password = request.form.get('password', '')
-        if password == ADMIN_PASSWORD:
-            if not os.path.exists(FEEDBACK_CSV_PATH):
-                return "No feedback data available.", 404
-            return send_file(FEEDBACK_CSV_PATH, as_attachment=True, download_name='peerfinder_feedback.csv', mimetype='text/csv')
-        else:
-            flash("Incorrect password. Access denied.")
-            return redirect(url_for('download_feedback'))
-    return render_template('password_prompt.html', file_type='Feedback Data')
 
 @app.route('/admin')
 def admin():
     return render_template('admin.html')
 
-@app.route('/disclaimer')
-def disclaimer():
-    return render_template('disclaimer.html')
-
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(debug=True)
