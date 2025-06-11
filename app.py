@@ -89,10 +89,6 @@ def update_records(records):
 def index():
     return render_template('index.html')
 
-@app.route('/disclaimer')
-def disclaimer():
-    return render_template('disclaimer.html')
-
 @app.route('/join', methods=['POST'])
 def join_queue():
     name = request.form.get('name', '').strip()
