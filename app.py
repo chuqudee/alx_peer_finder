@@ -32,6 +32,9 @@ def download_csv():
         metadata, res = dbx.files_download(CSV_PATH)
         csv_content = res.content.decode('utf-8')
         df = pd.read_csv(io.StringIO(csv_content))
+        # Force phone column to string to avoid float formatting issues
+        if 'phone' in df.columns:
+            df['phone'] = df['phone'].astype(str).str.strip()
         if 'matched' in df.columns:
             df['matched'] = df['matched'].astype(str).str.upper() == 'TRUE'
         else:
