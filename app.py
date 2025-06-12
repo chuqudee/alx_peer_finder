@@ -1,10 +1,10 @@
 import os
 import uuid
 import io
-from flask import Flask, request, jsonify, render_template, redirect, url_for
+from datetime import datetime
+from flask import Flask, request, jsonify, render_template, redirect, url_for, Response
 import dropbox
 import pandas as pd
-from datetime import datetime
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'default_secret_key')
@@ -26,11 +26,14 @@ def download_csv():
             df['matched'] = df['matched'].astype(str).str.upper() == 'TRUE'
         else:
             df['matched'] = False
+        # Ensure matched_timestamp column exists
+        if 'matched_timestamp' not in df.columns:
+            df['matched_timestamp'] = ''
         return df
-    except dropbox.exceptions.ApiError as e:
+    except dropbox.exceptions.ApiError:
         # If file not found, return empty DataFrame with expected columns
         columns = ['id', 'name', 'phone', 'email', 'cohort', 'assessment_week', 'language',
-                   'timestamp', 'matched', 'group_size', 'group_id', 'unpair_reason']
+                   'timestamp', 'matched', 'group_size', 'group_id', 'unpair_reason', 'matched_timestamp']
         return pd.DataFrame(columns=columns)
 
 def upload_csv(df):
@@ -106,7 +109,8 @@ def join_queue():
         'matched': False,
         'group_size': group_size_int,
         'group_id': '',
-        'unpair_reason': ''
+        'unpair_reason': '',
+        'matched_timestamp': ''
     }
     new_row_df = pd.DataFrame([new_row])
     df = pd.concat([df, new_row_df], ignore_index=True)
@@ -146,8 +150,10 @@ def match_users():
                         eligible = eligible.iloc[group_size:]
                         continue
                     group_id = f"group-{uuid.uuid4()}"
+                    now_iso = datetime.utcnow().isoformat()
                     df.loc[group.index, 'matched'] = True
                     df.loc[group.index, 'group_id'] = group_id
+                    df.loc[group.index, 'matched_timestamp'] = now_iso
                     updated = True
                     eligible = eligible.iloc[group_size:]
 
@@ -221,6 +227,7 @@ def unpair():
     df.at[idx, 'matched'] = False
     df.at[idx, 'group_id'] = ''
     df.at[idx, 'unpair_reason'] = reason
+    df.at[idx, 'matched_timestamp'] = ''
     upload_csv(df)
     return jsonify({'success': True})
 
@@ -239,10 +246,6 @@ def download_csv_route():
         mimetype='text/csv',
         headers={"Content-Disposition": "attachment;filename=students.csv"}
     )
-
-@app.route('/disclaimer')
-def disclaimer():
-    return render_template('disclaimer.html')
 
 if __name__ == '__main__':
     app.run(debug=True)
