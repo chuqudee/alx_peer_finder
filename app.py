@@ -53,10 +53,6 @@ class Student(db.Model):
             'unpair_reason': self.unpair_reason
         }
 
-@app.before_first_request
-def create_tables():
-    db.create_all()
-
 def find_existing_student(phone, email, cohort, assessment_week, language):
     return Student.query.filter(
         ((Student.phone == phone) | (Student.email == email)),
@@ -266,4 +262,7 @@ def download_csv():
     )
 
 if __name__ == '__main__':
+    # Create tables on startup without using before_first_request
+    with app.app_context():
+        db.create_all()
     app.run(debug=True)
