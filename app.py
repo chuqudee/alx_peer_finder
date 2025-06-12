@@ -32,9 +32,6 @@ def download_csv():
         metadata, res = dbx.files_download(CSV_PATH)
         csv_content = res.content.decode('utf-8')
         df = pd.read_csv(io.StringIO(csv_content))
-        # Force phone column to string to avoid float formatting issues
-        if 'phone' in df.columns:
-            df['phone'] = df['phone'].astype(str).str.strip()
         if 'matched' in df.columns:
             df['matched'] = df['matched'].astype(str).str.upper() == 'TRUE'
         else:
@@ -67,14 +64,15 @@ def find_existing(df, phone, email, cohort, assessment_week, language):
 
 def send_match_email(user_email, user_name, group_members):
     peer_info = '\n'.join([
-        f"Name: {m['name']}, Email: {m['email']}, Phone: {m['phone']}"
+        f"Name: {m['name']}\nEmail Address: {m['email']}\nWhatsApp: {m['phone']}"
         for m in group_members if m['email'] != user_email
     ])
     body = f"""Hi {user_name},
 
 You have been matched with the following peers:
-
 {peer_info}
+
+Please contact your peer(s) now!
 
 Best regards,
 Peer Finder Team
