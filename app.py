@@ -108,7 +108,8 @@ def join_queue():
         'group_id': '',
         'unpair_reason': ''
     }
-    df = df.append(new_row, ignore_index=True)
+    new_row_df = pd.DataFrame([new_row])
+    df = pd.concat([df, new_row_df], ignore_index=True)
     upload_csv(df)
     return redirect(url_for('waiting', user_id=new_id))
 
