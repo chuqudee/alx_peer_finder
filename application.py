@@ -7,22 +7,25 @@ import dropbox
 import pandas as pd
 from flask_mail import Mail, Message
 
-app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'default_secret_key')  # Secure key from env[1]
+application = Flask(__name__)
+#application.secret_key = "e8f3473b716cfe3760fd522e38a3bd5b9909510b0ef003f050e0a445fa3a6e83"
 
 # Flask-Mail configuration
-app.config.update(
+application.config.update(
     MAIL_SERVER='smtp.gmail.com',
     MAIL_PORT=587,
     MAIL_USE_TLS=True,
     MAIL_USERNAME='cokereafor@alxafrica.com',  # Your email here
     MAIL_PASSWORD='moqancerplnpisro',          # Your app password here
 )
-mail = Mail(app)
+mail = Mail(application)
 
-DROPBOX_ACCESS_TOKEN = os.environ.get('DROPBOX_ACCESS_TOKEN')
-if not DROPBOX_ACCESS_TOKEN:
-    raise Exception("DROPBOX_ACCESS_TOKEN environment variable not set")
+DROPBOX_ACCESS_TOKEN = 'sl.u.AFys5DRaycrcUxumYg8KHWR6EdMxU63qRgxqK_koZhGomcaAVz3APCnFNHs0PTMoKBAAPwsq35x7s4RawmRmgmBX9fje-LtbTXcd0MwTnInfQxVg9u7TD7fqzUcXMdDEJrVk5U5_6zYyfQZN9BgiYGpkzwKRr1uk3AiijRkVZdm1jYvfnhlH-Tm6hR1pZ-ySujtpxcSjQXoEJluM-o8J5Ac0MotZrD2_tXyR4b97x9se-YY4oxQbTc0Gao657TYsLpuUxRE8R0RI6CtyjunyMmX4J2tanfEyADigUzi10wVgo0Tio0hMQeLZ2jgKf4TY_H0H3AtPgRIrxTp96qx-vu4ho8FJvuZGbTvgUeIq37M-KTAaIxoMSjTqNtk_Kq9VGt7i6XjHzlmSmVRHM1Dk2QHyM3hDSmBI5xcVJLcs4uaRFZIYi8-M-19nDZghMVyEypLftSE6POaKCtRy-AOH64yAefJezExUG5wLgBLjkuLbRFx4edbk9zRiLOLT7x3xGAxu7hI6WrJG5eNKe85Qc4-_GQvWAROOk6-tySx_GoHie3oShZJqou0c71PR9ra62u5WO0fq_Xw4LYifKOULmgh6wHNmskGwlbhSDjp5fCtS17b_ZcFg637kKEe9uxw2K7ShTGflLB2mu43oMtxOm3yese2z_-6M_J0Yk5O1Rzulfm-AlZnIwmMoHTdJdasrNCbmgZa7kqhlwsSSA47uSWlKC3qIBDhQxAP7Lw2MxJpm-QXmtbZz4b2T2830kGhldr9VSWwQfx8p2Hq_Cqc2_HsJIDGm3JnTv2dU5lsBkBcwIiOFGQLljnmubwlcKcO5SehS2RFpl1azEqQksZopLAu8Mw-b4oam1N2SFVZZbg0I7lQWxlMGtG55ah2rYft39BKll4hllugiJFVGsDvN2ODkoLQ7OoJqAcgMaHB3AObpjuiJyCm93bxkiYVdh8UebFrqk4hhZbAUXoekWiA9GO8F30fWrGjfOlMyA7bi08xl-GrrmrZk9wCQtCjm1XTstbxbKAlWadAmWM507Ny088bZdymL0h6ZYkC_Dh1xqYdk8FM8owUvobObrzdC0Zgs1GR8Jc4ZFOSrlj2p-rJg65bnooGunOdjEbSb40j66b8yGq58I2q3UMg68Q_5TDLGIc-iXmC1z-40ECmPFzlCCsV3HMpPU6TC_66l6iDweCaX4D3OFmXnqwIhElkiEKdeYLcN5P8LLto8E-CxZYPZbapSYx_l_FlfjSbr4rSgCaStBnMx5d0YzZY63eVCyNCiRFqSNuUh49B9outrT-hLDHqXOIUeHosiXKcPjVdqci4wQ1TX6FnnPPIxYJjaBMZ9wnSx1u48TVMqiySAlZZqjP8SQMCrDmmqSfhdqay85KPRGOtLxjjLtmnqOSJFwwtBo2RYI6PPt6uy-Ux0rrA8ECrbPrJxoD1gCWnYcRaaHSYaJpiNG_8cIluT-f1R0K3-gRQ'
+
+#if DROPBOX_ACCESS_TOKEN:
+#    print(DROPBOX_ACCESS_TOKEN)
+#    raise Exception("DROPBOX_ACCESS_TOKEN environment variable not set")
+
 
 dbx = dropbox.Dropbox(DROPBOX_ACCESS_TOKEN)
 CSV_PATH = '/students.csv'
@@ -70,32 +73,30 @@ def find_existing(df, phone, email, cohort, assessment_week, language):
 
 def send_match_email(user_email, user_name, group_members):
     peer_info = '\n'.join([
-        f"Name: {m['name']}\nEmail Address: {m['email']}\nWhatsApp: {m['phone']}"
+        f"Name: {m['name']}, Email: {m['email']}, Phone: {m['phone']}"
         for m in group_members if m['email'] != user_email
     ])
     body = f"""Hi {user_name},
 
 You have been matched with the following peers:
-{peer_info}
 
-Please contact your peer(s) now!
+{peer_info}
 
 Best regards,
 Peer Finder Team
 """
     msg = Message(
         subject="You've been matched!",
-        sender=app.config['MAIL_USERNAME'],
+        sender=application.config['MAIL_USERNAME'],
         recipients=[user_email]
     )
-    msg.body = body
     mail.send(msg)
 
-@app.route('/')
+@application.route('/')
 def index():
     return render_template('index.html')
 
-@app.route('/join', methods=['POST'])
+@application.route('/join', methods=['POST'])
 def join_queue():
     name = request.form.get('name', '').strip()
     phone = str(request.form.get('phone', '').strip())  # Ensure string
@@ -158,11 +159,11 @@ def join_queue():
     upload_csv(df)
     return redirect(url_for('waiting', user_id=new_id))
 
-@app.route('/waiting/<user_id>')
+@application.route('/waiting/<user_id>')
 def waiting(user_id):
     return render_template('waiting.html', user_id=user_id)
 
-@app.route('/match', methods=['POST'])
+@application.route('/match', methods=['POST'])
 def match_users():
     data = request.json
     user_id = data.get('user_id')
@@ -223,7 +224,7 @@ def match_users():
     else:
         return jsonify({'matched': False})
 
-@app.route('/matched/<user_id>')
+@application.route('/matched/<user_id>')
 def matched(user_id):
     df = download_csv()
     user = df[df['id'] == user_id]
@@ -236,7 +237,7 @@ def matched(user_id):
     group_members = df[df['group_id'] == group_id]
     return render_template('matched.html', user=user, group_members=group_members.to_dict(orient='records'))
 
-@app.route('/check', methods=['GET', 'POST'])
+@application.route('/check', methods=['GET', 'POST'])
 def check_match():
     if request.method == 'POST':
         user_id = request.form.get('user_id', '').strip()
@@ -258,7 +259,7 @@ def check_match():
     else:
         return render_template('check.html')
 
-@app.route('/unpair', methods=['POST'])
+@application.route('/unpair', methods=['POST'])
 def unpair():
     user_id = request.form.get('user_id')
     reason = request.form.get('reason', '').strip()
@@ -282,11 +283,11 @@ def unpair():
     upload_csv(df)
     return jsonify({'success': True})
 
-@app.route('/admin')
+@application.route('/admin')
 def admin():
     return render_template('admin.html')
 
-@app.route('/admin/download_csv')
+@application.route('/admin/download_csv')
 def download_csv_route():
     df = download_csv()
     csv_buffer = io.StringIO()
@@ -298,9 +299,9 @@ def download_csv_route():
         headers={"Content-Disposition": "attachment;filename=students.csv"}
     )
 
-@app.route('/disclaimer')
+@application.route('/disclaimer')
 def disclaimer():
     return render_template('disclaimer.html')
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    application.run()

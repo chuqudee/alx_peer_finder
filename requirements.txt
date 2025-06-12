@@ -8,3 +8,4 @@ gunicorn
 gspread
 oauth2client
 dropbox
+python-dotenv
