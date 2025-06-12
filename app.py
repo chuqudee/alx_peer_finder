@@ -1,73 +1,136 @@
 import os
+import json
 import uuid
 from datetime import datetime
-import csv
-import io
-from flask import Flask, request, jsonify, render_template, redirect, url_for, Response
-from flask_sqlalchemy import SQLAlchemy
+from flask import Flask, request, jsonify, render_template, redirect, url_for, flash
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from threading import Lock  # Added for thread safety
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'default_secret_key')  # [1]
+app.secret_key = os.environ.get('SECRET_KEY', 'default_secret_key')
 
-# Database configuration (Render internal PostgreSQL) [2]
-DATABASE_URL = os.environ.get('DATABASE_URL')
-if not DATABASE_URL:
-    raise Exception("DATABASE_URL environment variable not set")
+# Global lock for sheet operations
+sheet_lock = Lock()
 
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+# Load Google Sheets credentials from environment variable
+GSHEET_CREDENTIALS_JSON = os.environ.get('GSHEET_CREDENTIALS_JSON')
+GSHEET_SHEET_ID = os.environ.get('GSHEET_SHEET_ID')
 
-app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+if not GSHEET_CREDENTIALS_JSON or not GSHEET_SHEET_ID:
+    raise Exception("Google Sheets credentials or Sheet ID not set in environment variables")
 
-db = SQLAlchemy(app)
+# Parse credentials JSON string
+creds_dict = json.loads(GSHEET_CREDENTIALS_JSON)
 
-class Student(db.Model):
-    __tablename__ = 'students'
-    id = db.Column(db.String(64), primary_key=True)
-    name = db.Column(db.String(128), nullable=False)
-    phone = db.Column(db.String(32), nullable=False)
-    email = db.Column(db.String(128), nullable=False)
-    cohort = db.Column(db.String(64), nullable=False)
-    assessment_week = db.Column(db.String(64), nullable=False)
-    language = db.Column(db.String(32), nullable=False)
-    timestamp = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    matched = db.Column(db.Boolean, default=False)
-    group_size = db.Column(db.Integer, nullable=False)
-    group_id = db.Column(db.String(64), default='')
-    unpair_reason = db.Column(db.String(256), default='')
+# Setup Google Sheets API client
+SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
+client = gspread.authorize(creds)
 
-    def to_dict(self):
-        return {
-            'id': self.id,
-            'name': self.name,
-            'phone': self.phone,
-            'email': self.email,
-            'cohort': self.cohort,
-            'assessment_week': self.assessment_week,
-            'language': self.language,
-            'timestamp': self.timestamp.isoformat(),
-            'matched': self.matched,
-            'group_size': self.group_size,
-            'group_id': self.group_id,
-            'unpair_reason': self.unpair_reason
-        }
+# Open the sheet by ID
+sheet = client.open_by_key(GSHEET_SHEET_ID).sheet1  # Use first worksheet
 
-def find_existing_student(phone, email, cohort, assessment_week, language):
-    return Student.query.filter(
-        ((Student.phone == phone) | (Student.email == email)),
-        Student.cohort == cohort,
-        Student.assessment_week == assessment_week,
-        Student.language == language
-    ).first()
+# Define expected columns in the sheet header row
+SHEET_COLUMNS = [
+    'id', 'name', 'phone', 'email', 'cohort', 'assessment_week', 'language',
+    'timestamp', 'matched', 'group_size', 'group_id', 'unpair_reason'
+]
+
+def normalize_record(r):
+    # Normalize matched to boolean
+    if isinstance(r.get('matched'), str):
+        r['matched'] = r['matched'].strip().upper() == 'TRUE'
+    elif not isinstance(r.get('matched'), bool):
+        r['matched'] = False
+
+    # Normalize group_size to int
+    try:
+        r['group_size'] = int(r.get('group_size', 0))
+    except Exception:
+        r['group_size'] = 0
+
+    # Strip whitespace from cohort and assessment_week
+    r['cohort'] = r.get('cohort', '').strip()
+    r['assessment_week'] = r.get('assessment_week', '').strip()
+    r['language'] = r.get('language', '').strip()
+    r['phone'] = r.get('phone', '').strip()
+    r['email'] = r.get('email', '').strip().lower()
+
+    # Ensure other keys exist to avoid KeyError
+    for key in SHEET_COLUMNS:
+        if key not in r:
+            r[key] = ''
+
+    return r
+
+def get_all_records():
+    try:
+        records = sheet.get_all_records()
+        normalized = [normalize_record(r) for r in records]
+        return normalized
+    except Exception as e:
+        print(f"Error reading sheet: {e}")
+        return []
+
+def append_record(record):
+    row = [record.get(col, '') for col in SHEET_COLUMNS]
+    try:
+        sheet.append_row(row)
+        return True
+    except Exception as e:
+        print(f"Error appending to sheet: {e}")
+        return False
+
+def update_records(records):
+    try:
+        # Only update if there are records to update
+        if not records:
+            return False
+            
+        # Get all values including row indices
+        all_values = sheet.get_all_values()
+        headers = all_values[0] if all_values else []
+        
+        # Create update data - skip header row
+        update_data = []
+        for i, record in enumerate(records):
+            row_index = i + 2  # +1 for header, +1 for 1-based index
+            row = [record.get(col, '') for col in SHEET_COLUMNS]
+            update_data.append({
+                'range': f'A{row_index}:L{row_index}',
+                'values': [row]
+            })
+            
+        # Batch update all changed rows
+        sheet.batch_update(update_data)
+        return True
+    except Exception as e:
+        print(f"Error updating sheet: {e}")
+        return False
+
+def find_student_row(records, phone, email, cohort, assessment_week, language):
+    for idx, r in enumerate(records, start=2):  # Sheet rows start at 1, header is row 1
+        if (r['phone'] == phone or r['email'] == email) and \
+           r['cohort'] == cohort and \
+           r['assessment_week'] == assessment_week and \
+           r['language'] == language:
+            return idx
+    return None
+
+def update_student_row(row_index, record):
+    row = [record.get(col, '') for col in SHEET_COLUMNS]
+    try:
+        # Update the row in the sheet (columns A to L)
+        sheet.update(f'A{row_index}:L{row_index}', [row])
+        return True
+    except Exception as e:
+        print(f"Error updating student row: {e}")
+        return False
 
 @app.route('/')
 def index():
     return render_template('index.html')
-
-@app.route('/disclaimer')
-def disclaimer():
-    return render_template('disclaimer.html')
 
 @app.route('/join', methods=['POST'])
 def join_queue():
@@ -93,33 +156,41 @@ def join_queue():
     except ValueError:
         return render_template('index.html', error="Invalid group size.")
 
-    existing = find_existing_student(phone, email, cohort, assessment_week, language)
+    # Use lock to prevent concurrent access
+    with sheet_lock:
+        records = get_all_records()
 
-    if existing:
-        if existing.matched:
-            group_id = existing.group_id
-            group_members = Student.query.filter_by(group_id=group_id).all()
-            return render_template('already_matched.html', user=existing, group_members=group_members)
+        row_index = find_student_row(records, phone, email, cohort, assessment_week, language)
+
+        if row_index:
+            existing_record = records[row_index - 2]
+            if existing_record['matched']:
+                group_id = existing_record['group_id']
+                group_members = [r for r in records if r['group_id'] == group_id]
+                return render_template('already_matched.html', user=existing_record, group_members=group_members)
+            else:
+                return render_template('already_in_queue.html', user_id=existing_record['id'])
+
+        # New student, create record
+        new_user = {
+            'id': str(uuid.uuid4()),
+            'name': name,
+            'phone': phone,
+            'email': email,
+            'cohort': cohort,
+            'assessment_week': assessment_week,
+            'language': language,
+            'timestamp': datetime.now().isoformat(),
+            'matched': False,
+            'group_size': group_size_int,
+            'group_id': '',
+            'unpair_reason': ''
+        }
+
+        if append_record(new_user):
+            return redirect(url_for('waiting', user_id=new_user['id']))
         else:
-            return render_template('already_in_queue.html', user_id=existing.id)
-
-    new_student = Student(
-        id=str(uuid.uuid4()),
-        name=name,
-        phone=phone,
-        email=email,
-        cohort=cohort,
-        assessment_week=assessment_week,
-        language=language,
-        timestamp=datetime.utcnow(),
-        matched=False,
-        group_size=group_size_int,
-        group_id='',
-        unpair_reason=''
-    )
-    db.session.add(new_student)
-    db.session.commit()
-    return redirect(url_for('waiting', user_id=new_student.id))
+            return render_template('index.html', error="Failed to add to queue. Please try again.")
 
 @app.route('/waiting/<user_id>')
 def waiting(user_id):
@@ -132,57 +203,84 @@ def match_users():
     if not user_id:
         return jsonify({'error': 'User ID required'}), 400
 
-    all_students = Student.query.all()
-    cohorts = list(set(s.cohort for s in all_students if s.cohort))
-    weeks = list(set(s.assessment_week for s in all_students if s.assessment_week))
+    # Use lock for matching operation
+    with sheet_lock:
+        records = get_all_records()
+        user = next((r for r in records if r['id'] == user_id), None)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+            
+        if user['matched']:
+            group_id = user['group_id']
+            group_members = [r for r in records if r['group_id'] == group_id]
+            return jsonify({
+                'matched': True,
+                'group_id': group_id,
+                'members': group_members
+            })
 
-    updated = False
+        # Organize students by matching criteria
+        match_groups = {}
+        for r in records:
+            if not r['matched'] and r['group_size'] in [2, 5]:
+                key = (r['cohort'], r['assessment_week'], r['language'], r['group_size'])
+                match_groups.setdefault(key, []).append(r)
 
-    for cohort in cohorts:
-        for week in weeks:
-            for group_size in [2, 5]:
-                eligible = [s for s in all_students if not s.matched and
-                            s.cohort == cohort and s.assessment_week == week and
-                            s.group_size == group_size]
-                while len(eligible) >= group_size:
-                    group = eligible[:group_size]
-                    if len(set(s.id for s in group)) < group_size:
-                        eligible = eligible[group_size:]
-                        continue
-                    group_id = f"group-{uuid.uuid4()}"
-                    for s in group:
-                        s.matched = True
-                        s.group_id = group_id
-                        db.session.add(s)
-                    db.session.commit()
-                    updated = True
-                    eligible = eligible[group_size:]
+        updated = False
+        for key, group_list in match_groups.items():
+            group_size = key[3]
+            # Sort by timestamp to prioritize older entries
+            group_list.sort(key=lambda x: x['timestamp'])
+            
+            while len(group_list) >= group_size:
+                group = group_list[:group_size]
+                group_id = f"group-{uuid.uuid4()}"
+                
+                for member in group:
+                    member['matched'] = True
+                    member['group_id'] = group_id
+                    # Remove from available list
+                    group_list.remove(member)
+                
+                updated = True
+                # Remove grouped members from main list
+                for member in group:
+                    for i, r in enumerate(records):
+                        if r['id'] == member['id']:
+                            records[i] = member
+                            break
 
-    user = Student.query.get(user_id)
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
+        if updated:
+            if not update_records(records):
+                print("Failed to update records after matching")
+            # Re-fetch records to ensure we have latest state
+            records = get_all_records()
 
-    if user.matched:
-        group_id = user.group_id
-        group_members = Student.query.filter_by(group_id=group_id).all()
-        return jsonify({
-            'matched': True,
-            'group_id': group_id,
-            'members': [m.to_dict() for m in group_members]
-        })
-    else:
-        return jsonify({'matched': False})
+        # Check if current user was matched
+        user = next((r for r in records if r['id'] == user_id), None)
+        if user and user['matched']:
+            group_id = user['group_id']
+            group_members = [r for r in records if r['group_id'] == group_id]
+            return jsonify({
+                'matched': True,
+                'group_id': group_id,
+                'members': group_members
+            })
+        else:
+            return jsonify({'matched': False})
 
 @app.route('/matched/<user_id>')
 def matched(user_id):
-    user = Student.query.get(user_id)
-    if not user:
-        return "User not found", 404
-    if not user.matched:
-        return redirect(url_for('waiting', user_id=user_id))
-    group_id = user.group_id
-    group_members = Student.query.filter_by(group_id=group_id).all()
-    return render_template('matched.html', user=user, group_members=group_members)
+    with sheet_lock:
+        records = get_all_records()
+        user = next((r for r in records if r['id'] == user_id), None)
+        if not user:
+            return "User not found", 404
+        if not user['matched']:
+            return redirect(url_for('waiting', user_id=user_id))
+        group_id = user['group_id']
+        group_members = [r for r in records if r['group_id'] == group_id]
+        return render_template('matched.html', user=user, group_members=group_members)
 
 @app.route('/check', methods=['GET', 'POST'])
 def check_match():
@@ -191,16 +289,18 @@ def check_match():
         if not user_id:
             return render_template('check.html', error="Please enter your ID.")
 
-        user = Student.query.get(user_id)
-        if not user:
-            return render_template('check.html', error="ID not found. Please check and try again.")
+        with sheet_lock:
+            records = get_all_records()
+            user = next((r for r in records if r['id'] == user_id), None)
+            if not user:
+                return render_template('check.html', error="ID not found. Please check and try again.")
 
-        if user.matched:
-            group_id = user.group_id
-            group_members = Student.query.filter_by(group_id=group_id).all()
-            return render_template('check.html', matched=True, group_members=group_members, user=user)
-        else:
-            return render_template('check.html', matched=False, user=user)
+            if user['matched']:
+                group_id = user['group_id']
+                group_members = [r for r in records if r['group_id'] == group_id]
+                return render_template('check.html', matched=True, group_members=group_members, user=user)
+            else:
+                return render_template('check.html', matched=False, user=user)
     else:
         return render_template('check.html')
 
@@ -211,58 +311,38 @@ def unpair():
     if not user_id or not reason:
         return jsonify({'error': 'User ID and reason are required'}), 400
 
-    user = Student.query.get(user_id)
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
+    with sheet_lock:
+        records = get_all_records()
+        user = next((r for r in records if r['id'] == user_id), None)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
 
-    user.matched = False
-    user.group_id = ''
-    user.unpair_reason = reason
-    db.session.commit()
-    return jsonify({'success': True})
+        user['matched'] = False
+        user['group_id'] = ''
+        user['unpair_reason'] = reason
+
+        # Find the row index for this user
+        row_index = None
+        for idx, r in enumerate(records):
+            if r['id'] == user_id:
+                row_index = idx + 2  # +1 for header, +1 for 1-based index
+                break
+
+        if row_index:
+            if update_student_row(row_index, user):
+                return jsonify({'success': True})
+            else:
+                return jsonify({'error': 'Failed to update record'}), 500
+        else:
+            return jsonify({'error': 'User record not found in sheet'}), 404
 
 @app.route('/admin')
 def admin():
     return render_template('admin.html')
 
-@app.route('/admin/download_csv')
-def download_csv():
-    students = Student.query.all()
-
-    output = io.StringIO()
-    writer = csv.writer(output)
-
-    # CSV header
-    writer.writerow([
-        'id', 'name', 'phone', 'email', 'cohort', 'assessment_week', 'language',
-        'timestamp', 'matched', 'group_size', 'group_id', 'unpair_reason'
-    ])
-
-    for s in students:
-        writer.writerow([
-            s.id,
-            s.name,
-            s.phone,
-            s.email,
-            s.cohort,
-            s.assessment_week,
-            s.language,
-            s.timestamp.isoformat(),
-            s.matched,
-            s.group_size,
-            s.group_id,
-            s.unpair_reason
-        ])
-
-    output.seek(0)
-    return Response(
-        output,
-        mimetype='text/csv',
-        headers={"Content-Disposition": "attachment;filename=students.csv"}
-    )
+@app.route('/disclaimer')
+def disclaimer():
+    return render_template('disclaimer.html')
 
 if __name__ == '__main__':
-    # Create tables on startup without using before_first_request
-    with app.app_context():
-        db.create_all()
     app.run(debug=True)
