@@ -5,9 +5,20 @@ from datetime import datetime
 from flask import Flask, request, jsonify, render_template, redirect, url_for, Response
 import dropbox
 import pandas as pd
+from flask_mail import Mail, Message
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'default_secret_key')
+
+# Flask-Mail configuration
+app.config.update(
+    MAIL_SERVER='smtp.gmail.com',
+    MAIL_PORT=587,
+    MAIL_USE_TLS=True,
+    MAIL_USERNAME='cokereafor@alxafrica.com',  # Your email here
+    MAIL_PASSWORD='moqancerplnpisro',          # Your app password here
+)
+mail = Mail(app)
 
 DROPBOX_ACCESS_TOKEN = os.environ.get('DROPBOX_ACCESS_TOKEN')
 if not DROPBOX_ACCESS_TOKEN:
@@ -21,17 +32,14 @@ def download_csv():
         metadata, res = dbx.files_download(CSV_PATH)
         csv_content = res.content.decode('utf-8')
         df = pd.read_csv(io.StringIO(csv_content))
-        # Normalize matched column to boolean
         if 'matched' in df.columns:
             df['matched'] = df['matched'].astype(str).str.upper() == 'TRUE'
         else:
             df['matched'] = False
-        # Ensure matched_timestamp column exists
         if 'matched_timestamp' not in df.columns:
             df['matched_timestamp'] = ''
         return df
     except dropbox.exceptions.ApiError:
-        # If file not found, return empty DataFrame with expected columns
         columns = ['id', 'name', 'phone', 'email', 'cohort', 'assessment_week', 'language',
                    'timestamp', 'matched', 'group_size', 'group_id', 'unpair_reason', 'matched_timestamp']
         return pd.DataFrame(columns=columns)
@@ -53,6 +61,28 @@ def find_existing(df, phone, email, cohort, assessment_week, language):
     if not matches.empty:
         return matches.index[0]
     return None
+
+def send_match_email(user_email, user_name, group_members):
+    peer_info = '\n'.join([
+        f"Name: {m['name']}, Email: {m['email']}, Phone: {m['phone']}"
+        for m in group_members if m['email'] != user_email
+    ])
+    body = f"""Hi {user_name},
+
+You have been matched with the following peers:
+
+{peer_info}
+
+Best regards,
+Peer Finder Team
+"""
+    msg = Message(
+        subject="You've been matched!",
+        sender=app.config['MAIL_USERNAME'],
+        recipients=[user_email]
+    )
+    msg.body = body
+    mail.send(msg)
 
 @app.route('/')
 def index():
@@ -168,10 +198,14 @@ def match_users():
     if user['matched']:
         group_id = user['group_id']
         group_members = df[df['group_id'] == group_id]
+        members_list = group_members.to_dict(orient='records')
+        # Send email to each member with peer info
+        for m in members_list:
+            send_match_email(m['email'], m['name'], members_list)
         return jsonify({
             'matched': True,
             'group_id': group_id,
-            'members': group_members.to_dict(orient='records')
+            'members': members_list
         })
     else:
         return jsonify({'matched': False})
