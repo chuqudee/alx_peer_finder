@@ -8,7 +8,7 @@ import pandas as pd
 from flask_mail import Mail, Message
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'default_secret_key')
+app.secret_key = os.environ.get('SECRET_KEY', 'default_secret_key')  # Secure key from env[1]
 
 # Flask-Mail configuration
 app.config.update(
@@ -32,7 +32,7 @@ def download_csv():
         metadata, res = dbx.files_download(CSV_PATH)
         csv_content = res.content.decode('utf-8')
         df = pd.read_csv(io.StringIO(csv_content))
-        # Force phone column to string to avoid float formatting issues
+        # Ensure phone is string to avoid float formatting issues
         if 'phone' in df.columns:
             df['phone'] = df['phone'].astype(str).str.strip()
         if 'matched' in df.columns:
@@ -48,6 +48,9 @@ def download_csv():
         return pd.DataFrame(columns=columns)
 
 def upload_csv(df):
+    # Ensure phone column is string before upload to prevent float formatting
+    if 'phone' in df.columns:
+        df['phone'] = df['phone'].astype(str).str.strip()
     csv_buffer = io.StringIO()
     df.to_csv(csv_buffer, index=False)
     csv_buffer.seek(0)
@@ -67,15 +70,14 @@ def find_existing(df, phone, email, cohort, assessment_week, language):
 
 def send_match_email(user_email, user_name, group_members):
     peer_info = '\n'.join([
-        f"Name: {m['name']}\nEmail Address: {m['email']}\nWhatsApp: {m['phone']}"
+        f"Name: {m['name']}, Email: {m['email']}, Phone: {m['phone']}"
         for m in group_members if m['email'] != user_email
     ])
     body = f"""Hi {user_name},
 
 You have been matched with the following peers:
-{peer_info}
 
-Please contact your peer(s) now!
+{peer_info}
 
 Best regards,
 Peer Finder Team
@@ -85,7 +87,6 @@ Peer Finder Team
         sender=app.config['MAIL_USERNAME'],
         recipients=[user_email]
     )
-    msg.body = body
     mail.send(msg)
 
 @app.route('/')
@@ -95,7 +96,7 @@ def index():
 @app.route('/join', methods=['POST'])
 def join_queue():
     name = request.form.get('name', '').strip()
-    phone = request.form.get('phone', '').strip()
+    phone = str(request.form.get('phone', '').strip())  # Ensure string
     email = request.form.get('email', '').strip().lower()
     cohort = request.form.get('cohort', '').strip()
     assessment_week = request.form.get('assessment_week', '').strip()
@@ -148,6 +149,10 @@ def join_queue():
     }
     new_row_df = pd.DataFrame([new_row])
     df = pd.concat([df, new_row_df], ignore_index=True)
+
+    # Ensure phone column is string before upload
+    df['phone'] = df['phone'].astype(str).str.strip()
+
     upload_csv(df)
     return redirect(url_for('waiting', user_id=new_id))
 
@@ -192,6 +197,8 @@ def match_users():
                     eligible = eligible.iloc[group_size:]
 
     if updated:
+        # Ensure phone column is string before upload
+        df['phone'] = df['phone'].astype(str).str.strip()
         upload_csv(df)
 
     user = df[df['id'] == user_id]
@@ -266,6 +273,10 @@ def unpair():
     df.at[idx, 'group_id'] = ''
     df.at[idx, 'unpair_reason'] = reason
     df.at[idx, 'matched_timestamp'] = ''
+
+    # Ensure phone column is string before upload
+    df['phone'] = df['phone'].astype(str).str.strip()
+
     upload_csv(df)
     return jsonify({'success': True})
 
