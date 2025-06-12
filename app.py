@@ -247,5 +247,9 @@ def download_csv_route():
         headers={"Content-Disposition": "attachment;filename=students.csv"}
     )
 
+@app.route('/disclaimer')
+def disclaimer():
+    return render_template('disclaimer.html')
+
 if __name__ == '__main__':
     app.run(debug=True)
